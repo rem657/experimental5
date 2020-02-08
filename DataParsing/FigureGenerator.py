@@ -12,10 +12,11 @@ class BuildSpectre():
             assert AssertionError(" Le type est inconnue")
         self.ROI_limit = []
         self.peaks = []
+        self.data_noiseless = self.data.copy()
         for coord in ROIs:
             coords = coord.split(" ")
             self.ROI_limit.append((int(coords[0]),int(coords[1])))
-        self.calculate_peaks()
+        self.noise_array = self.calculate_peaks()
     @staticmethod
     def __importData_gamma(fileName:str)-> tuple:
         with open("Data/{}".format(fileName),"r") as datafile:
@@ -42,7 +43,7 @@ class BuildSpectre():
     def show_Spectre(self,title="placeHolder")->tuple:
         fig,ax = plt.subplots()
         data = self.data
-        #ax.bar(x = range(0,len(data)),height = data,width=1)
+        ax.bar(x = range(0,len(data)),height = data,width=1)
         ax.set_xlabel("Channel")
         ax.set_ylabel("Nombre d'impulsion")
         ax.set_title("{}".format(title))
@@ -65,29 +66,32 @@ class BuildSpectre():
             centroid.append(round(sum(roi_poid*list(range(ROI[0],ROI[1]+1)))/sum(roi_poid),2))
         return centroid
 
-    def remove_noise(self)->None:
+    def remove_noise(self)->object:
+        noise_array = np.zeros(len(self.data))
         for index,ROI in enumerate(self.ROI_limit):
             x = self.get_frontier_points_x(index)
             y = self.get_frontier_points_y(index)
-            average_noise = np.average(y)
             noise_y = Noise(xdata= x, ydata=y).get_noise()
             for i in range(ROI[0],ROI[1]+1):
-                self.data[i] -= noise_y(i)
-                if self.data[i] < 0:
-                    self.data[i] =0
+                noise_array[i]=noise_y(i)
+                self.data_noiseless[i] -= noise_y(i)
+                if self.data_noiseless[i] < 0:
+                    self.data_noiseless[i] =0
+                    #noise_array[i] = self.data[i]
+        return noise_array
 
     def remove_ROI(self,index:int)->None:
         self.ROI_limit.pop(index)
 
     def get_frontier_points_y(self,ROInumber:int)->list:
         frontier = self.ROI_limit[ROInumber]
-        front = self.data[frontier[0]-3:frontier[0]+4]
-        back = self.data[frontier[1]-3:frontier[1]+4]
+        front = self.data[frontier[0]-3:frontier[0]+2]
+        back = self.data[frontier[1]-1:frontier[1]+4]
         return np.concatenate((front,back),axis=None)
 
     def get_frontier_points_x(self,ROInumber:int)->list:
         frontier = self.ROI_limit[ROInumber]
-        return list(range(frontier[0]-3,frontier[0]+4))+list(range(frontier[1]-3,frontier[1]+4))
+        return list(range(frontier[0]-3,frontier[0]+2))+list(range(frontier[1]-1,frontier[1]+4))
 
     def add_ROI(self,leftlimit:int,rightlimit:int)->None:
         self.ROI_limit.append((leftlimit,rightlimit))
@@ -104,17 +108,23 @@ class BuildSpectre():
 
     def plot_gaussian_over(self,ax,index:int):
         peak = self.peaks[index]
-        return peak.gaussian_plot(ax, len(self.data))
+        x = peak.x
+        y = peak.y
+        for index,xelem in enumerate(x):
+            y[index] += self.noise_array[xelem]
+        ax.plot(x,y,"--",color = "red")
 
     def calculate_peak(self,ROI:tuple)->object:
         x = list(range(ROI[0], ROI[1] + 1))
-        return Gaussian(xdata=x, ydata=[self.data[i] for i in x])
+        return Gaussian(xdata=x, ydata=[self.data_noiseless[i] for i in x])
 
-    def calculate_peaks(self):
-        self.remove_noise()
+    def calculate_peaks(self)->object:
+        noise_array = self.remove_noise()
         for ROI in self.ROI_limit:
             self.peaks.append(self.calculate_peak(ROI))
-
+        return noise_array
+    def calibrate(self):
+        pass
 class Noise():
     def __init__(self,xdata:list,ydata:list):
         self.xdata = xdata
@@ -132,22 +142,23 @@ class Noise():
 class Gaussian():
     def __init__(self,xdata:list,ydata:list):
         self.x = xdata
-        self.y = ydata
-        param,pcov = sp.curve_fit(lambda x,mu,sigma:(1/(sigma*np.sqrt(2*np.pi)))*np.exp(-(x-mu)**2/(2*sigma**2)),xdata,ydata)
+        param,pcov = sp.curve_fit(lambda x,mu,sigma,a: a*np.exp(-(x-mu)**2/(2*sigma**2)),xdata,ydata,p0=[np.mean(self.x),np.std(self.x),1])
         self.mu = param[0]
-        self.sigma = param[1]
-
+        self.sigma = abs(param[1])
+        self.a = param[2]
+        self.y = [self.gaussian_function(x) for x in self.x]
     def gaussian_function(self,x)->callable:
-        return (1/(self.sigma*np.sqrt(2*np.pi)))*np.exp(-(x-self.mu)**2/(2.*self.sigma**2))
+        return self.a*np.exp(-(x-self.mu)**2/(2*self.sigma**2))
 
-    def gaussian_plot(self,ax,length:int)->None:
-        ax.plot(y = [self.gaussian_function(x) for x in range(length)],color = "red")
+
 
 if __name__ == "__main__":
     spectre = BuildSpectre("Co + Cs.Spe","maelstro")
     #spectre.remove_noise()
     fig,ax = spectre.show_Spectre()
-    #spectre.add_ROIS_to_fig(ax)
+    spectre.add_ROIS_to_fig(ax)
     print(spectre.get_FWHMs())
     spectre.plot_gaussian_over(ax,0)
+    spectre.plot_gaussian_over(ax, 1)
+    spectre.plot_gaussian_over(ax, 2)
     plt.show()

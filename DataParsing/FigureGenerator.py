@@ -47,7 +47,7 @@ class BuildSpectre():
         fig,ax = plt.subplots()
         data = self.data
         ax.bar(x = self.datax,height = data,width=1)
-        ax.set_xlabel("Énergie [keV]" if self.calibrated else "Channel")
+        ax.set_xlabel("Canaux")
         ax.set_ylabel("Nombre d'impulsions détectées")
         ax.set_title("{}".format(title))
         plt.margins(x=0,y=0)
@@ -106,13 +106,14 @@ class BuildSpectre():
     def get_FWHMs(self,ax)->list:
         FWHMs = []
         for i in range(len(self.ROI_limit)):
-            FWHM = round(self.get_FWHM(i),2)
+            FWHM = abs(round(self.get_FWHM(i),4))
             FWHMs.append(FWHM)
             peak = self.peaks[i]
             peakx = peak.mu
+            peaksig = abs(peak.sigma)
             peaky = peak.gaussian_function(peak.mu) / 2
-            ax.annotate(" ", (peakx, peaky),xytext = (peakx+2*(FWHM),4*peaky/3),arrowprops={'arrowstyle': '->'})
-            ax.annotate("FWHM : {} {}".format(FWHM,"[keV]" if self.calibrated else ""),(peakx+2*(FWHM),4*peaky/3),xytext = (peakx+2*(FWHM),4*peaky/3))
+            ax.annotate(" ", (peakx, peaky),xytext = (peakx+50,4*peaky/3),arrowprops={'arrowstyle': '->'})
+            ax.annotate("FWHM : {} [keV] \n Peak : {} [keV]".format(FWHM,round(peak.mucalib,4)),(peakx+50,4*peaky/3),xytext = (peakx+2*(FWHM),4*peaky/3),fontsize = 6)
         return FWHMs
 
     def get_FWHM(self,index:int)->float:
@@ -140,24 +141,26 @@ class BuildSpectre():
             else:
                 self.peaks[index] = self.calculate_peak(ROI)
 
-    def calibrate(self,echantillon:str,energie:list,plot = False)->callable:
+    def calibrate(self,echantillon:str,energie:list,plot = False)->None:
         centroid = [0]+[self.peaks[i].mu for i in range(len(self.peaks))]
         linFit =  Noise(centroid,[0]+energie)
         yfunction =linFit.get_noise()
         for index, peak in enumerate(self.peaks):
-            peak.mu = yfunction(peak.mu)
+            peak.mucalib = yfunction(peak.mu)
             peak.sigma = yfunction(peak.sigma)
         self.calibrated = True
         if plot:
             fig, ax = plt.subplots()
             ax.set_xlabel("Canaux")
             ax.set_ylabel("Énergie [keV]")
-            ax.set_title("Courbe de calibration {}".format(echantillon))
-            ax.text(6,8,"y = {}x + {}".format(round(linFit.param[0],2),round(linFit.param[1],2)))
+            #ax.set_title("Courbe de calibration {}".format(echantillon))
+            ax.text(0.2,0.8,"y = {}x + {}".format(round(linFit.param[0],4),round(linFit.param[1],4)),transform=ax.transAxes)
             ax.plot(self.datax,[yfunction(i) for i in range(len(self.datax))])
-            ax.scatter(x=centroid, y=[0] + energie, marker="o",color = "red")
-            fig.savefig("Courbe de calibration {}.png".format(echantillon))
-        return ()
+            ax.scatter(x=centroid, y=[0]+energie, marker="o",color = "red")
+            for index, center in enumerate(centroid[1:]):
+                ax.annotate(energie[index], (center, energie[index]))
+            fig.savefig("Courbe de calibration {}.png".format(echantillon),bbox_inches = "tight")
+
 class Noise():
     def __init__(self,xdata:list,ydata:list):
         self.xdata = xdata
@@ -179,6 +182,8 @@ class Gaussian():
         param,pcov = sp.curve_fit(lambda x,mu,sigma,a: a*np.exp(-(x-mu)**2/(2*sigma**2)),xdata,ydata,p0=[np.mean(self.x),np.std(self.x),1])
         self.mu = param[0]
         self.sigma = abs(param[1])
+        self.mucalib = param[0]
+        self.sigmacalib = abs(param[1])
         self.a = param[2]
         self.y = [self.gaussian_function(x) for x in self.x]
     def gaussian_function(self,x)->callable:
@@ -196,19 +201,41 @@ def Fait_toute_les_figures():
             spectre.plot_gaussian_over(ax, i)
 
         spectre.save_fig(filename)
+def sum_les_shit(files:list):
+    rois = []
+    Data = np.zeros(2048,int)
+    for file in files:
+        with open("Data/{}".format(file), "r") as datafile:
+            rawstr = datafile.read().split("\n")
+            ROI_index = rawstr.index("<<ROI>>")
+            data_index = rawstr.index("<<DATA>>")
+            config_index = rawstr.index("<<DPP CONFIGURATION>>")
+            data_list = rawstr[data_index + 1:config_index - 1]
+            ROI_list = rawstr[ROI_index + 1:data_index]
+            CONFIG_list = rawstr[config_index + 1:]
+            Data += np.array(data_list,int)
+            rois+=ROI_list
+    with open("Data/SI-PIN.mca","w") as outfile :
+        outfile.write("<<ROI>>\n")
+        for i in range(len(rois)):
+            outfile.write(rois[i]+"\n")
+        outfile.write("<<DATA>>\n")
+        for i in range(len(Data)):
+            outfile.write(str(Data[i])+"\n")
+        outfile.write("<<DPP CONFIGURATION>>")
+
 if __name__ == "__main__":
-    name = "Am Gain 91,86.mcs"
-    spectre = BuildSpectre(name,"AMDC")
+    name = "Co + Cs + Na + Co.Spe"
+    spectre1 = BuildSpectre(name,"maelstro")
 
-    energy = [13.95,59.54]
-    spectre.calculate_peaks()
-    #spectre.calibrate(energie=energy, echantillon="",plot=True)
-    #spectre.calculate_peaks()
-    fig, ax = spectre.show_Spectre("")
-    spectre.add_ROIS_to_fig(ax)
-    spectre.get_FWHMs(ax)
-    for i in range(len(spectre.ROI_limit)):
-        spectre.plot_gaussian_over(ax,i)
-
-   # spectre.save_fig(name[:-3]+"png")
+    energy = [122.06,511,661.66,1173.228,1332.492]
+    spectre1.calculate_peaks()
+    spectre1.calibrate(energie=energy, echantillon=name[:2],plot=True)
+    fig, ax = spectre1.show_Spectre("")
+    spectre1.add_ROIS_to_fig(ax)
+    spectre1.get_FWHMs(ax)
+    for i in range(len(spectre1.ROI_limit)):
+        spectre1.plot_gaussian_over(ax,i)
+    plt.tight_layout()
+    #spectre1.save_fig("Co + Cs + Na + Co.png")
     plt.show()

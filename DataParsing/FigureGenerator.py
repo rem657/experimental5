@@ -7,7 +7,7 @@ class BuildSpectre():
     def __init__(self,fileName,type):
         self.calibrated = False
         self.extradata = None
-        if type == "maelstro" :
+        if type == "maestro" :
             self.data,ROIs  =  self.__importData_gamma(fileName)
         if type == "AMDC":
              self.data,ROIs,self.extradata = self.__importData_xray(fileName)
@@ -103,7 +103,7 @@ class BuildSpectre():
     def add_ROI(self,leftlimit:int,rightlimit:int)->None:
         self.ROI_limit.append((leftlimit,rightlimit))
 
-    def get_FWHMs(self,ax)->list:
+    def get_FWHMs(self,ax=None)->list:
         FWHMs = []
         for i in range(len(self.ROI_limit)):
             FWHM = abs(round(self.get_FWHM(i),4))
@@ -112,13 +112,16 @@ class BuildSpectre():
             peakx = peak.mu
             peaksig = abs(peak.sigma)
             peaky = peak.gaussian_function(peak.mu) / 2
-            ax.annotate(" ", (peakx, peaky),xytext = (peakx+50,4*peaky/3),arrowprops={'arrowstyle': '->'})
-            ax.annotate("FWHM : {} [keV] \n Peak : {} [keV]".format(FWHM,round(peak.mucalib,4)),(peakx+50,4*peaky/3),xytext = (peakx+2*(FWHM),4*peaky/3),fontsize = 6)
+            mult = 2 if i % 2 == 0 else 4
+            if ax != None:
+                ax.annotate(" ", (peakx, peaky),xytext = (peakx+50,mult*peaky/3),arrowprops={'arrowstyle': '->'})
+                ax.annotate("FWHM : {} [keV] \n Peak : {} [keV]".format(FWHM,round(peak.mucalib,4)),(peakx+30,mult*peaky/3),xytext = (peakx+30,mult*peaky/3),fontsize = 6)
         return FWHMs
 
     def get_FWHM(self,index:int)->float:
         peak = self.peaks[index]
-        return (peak.sigma)*np.sqrt(2*np.log(2))
+        sig = peak.sigmacalib if self.calibrated else peak.sigma
+        return (sig)*np.sqrt(2*np.log(2))
 
     def plot_gaussian_over(self,ax,index:int):
         peak = self.peaks[index]
@@ -223,19 +226,93 @@ def sum_les_shit(files:list):
         for i in range(len(Data)):
             outfile.write(str(Data[i])+"\n")
         outfile.write("<<DPP CONFIGURATION>>")
-
+def res_rel():
+    names = ["Am Gain 20.90.mcs", "Am Gain 49.93.mcs", "Am Gain 76.70.mcs", "Am Gain 91.86.mcs"]
+    gain =[]
+    res = []
+    for name in names:
+        spectre = BuildSpectre(name, "AMDC")
+        spectre.calculate_peaks()
+        pic = spectre.peaks[0].mu
+        f = spectre.get_FWHM(0)
+        gain.append(float(name[8:-4]))
+        res.append(100*f/pic)
+    plt.scatter(x=gain,y=res,marker="^")
+    plt.ylabel("Résolution relative [%]")
+    plt.xlabel("Gain [dB]")
+    plt.savefig("resolution rel")
+def res_abs():
+    names = ["Am Gain 20.90.mcs", "Am Gain 49.93.mcs", "Am Gain 76.70.mcs", "Am Gain 91.86.mcs"]
+    gain = []
+    res = []
+    for name in names:
+        spectre = BuildSpectre(name, "AMDC")
+        spectre.calculate_peaks()
+        pic = spectre.peaks[0].mu
+        f = spectre.get_FWHM(0)
+        gain.append(float(name[8:-4]))
+        res.append(f)
+    plt.scatter(x=gain, y=res,marker="^")
+    plt.ylabel("Résolution absolue [canaux]")
+    plt.xlabel("Gain [dB]")
+    plt.savefig("resolution abs")
+def res_vs_energy():
+    energy = {"SI-PIN":[6.4,13.95,14.4,22.1,25,59.54],
+              "NaI":[122.06, 511, 661.66, 1173.228, 1332.492],
+              "CdTe am":[13.95,17.74,59.54],
+              "CdTe Cd":[22.1,88],
+                "CdTe Co":[14.4,122]}
+    fig,ax = plt.subplots()
+    ax.set_ylabel("Résolution absolue [canaux]")
+    ax.set_xlabel("Énergie des pics [keV]")
+    ax.set(xlim=(0,200))
+    for file in os.listdir(os.fsencode("Data")):
+        name = os.fsdecode(file)
+        print(name)
+        logiciel = "AMDC" if name.endswith(".mcs") else "maestro"
+        spectre = BuildSpectre(name, logiciel)
+        spectre.calculate_peaks()
+        if name.startswith("SI-PIN"):
+            energie = "SI-PIN"
+            label = "Détecteur Si-PIN, toutes les sources, gain de 76,70 dB"
+        elif name.startswith("Am"):
+            energie = "CdTe am"
+            label = "Détecteur CdTe, source Am-241,gain de 91,86 dB"
+        elif name.startswith("Cd"):
+            energie = "CdTe Cd"
+            label = "Détecteur CdTe, source Cd-109, gain de 60,30 dB"
+        elif name.startswith("Co gain41,59"):
+            energie = "CdTe Co"
+            label = "Détecteur CdTe, source Co-57, gain de 41,59 dB"
+        else:
+            energie = "NaI"
+            label = "Détecteur NaI, toutes les sources, gain de 64 dB"
+        print(energie)
+        pics = spectre.peaks
+        f = spectre.get_FWHMs()
+        res_rel = [f[i] for i in range(len(f))]
+        print(len(res_rel))
+        scat = ax.scatter(x=energy[energie],y = res_rel,marker = ".")
+        scat.set_label(label)
+        ax.legend(fancybox = True,framealpha = 0.5)
 if __name__ == "__main__":
-    name = "Co + Cs + Na + Co.Spe"
-    spectre1 = BuildSpectre(name,"maelstro")
 
-    energy = [122.06,511,661.66,1173.228,1332.492]
-    spectre1.calculate_peaks()
-    spectre1.calibrate(energie=energy, echantillon=name[:2],plot=True)
-    fig, ax = spectre1.show_Spectre("")
-    spectre1.add_ROIS_to_fig(ax)
-    spectre1.get_FWHMs(ax)
-    for i in range(len(spectre1.ROI_limit)):
-        spectre1.plot_gaussian_over(ax,i)
-    plt.tight_layout()
-    #spectre1.save_fig("Co + Cs + Na + Co.png")
-    plt.show()
+
+    #spectre1 = BuildSpectre(name,"AMDC")
+    #CdTe AM
+    #energy = [13.95,59.54]
+    #Si-PIN
+    #energy = [6.4,13.95,14.4,22.1,25,59.54]
+    #NaI
+    #energy = [122.06, 511, 661.66, 1173.228, 1332.492]
+    #spectre1.calculate_peaks()
+    #spectre1.calibrate(energie=energy, echantillon=name[:2],plot=True)
+    #fig, ax = spectre1.show_Spectre("")
+    #spectre1.add_ROIS_to_fig(ax)
+    #spectre1.get_FWHMs(ax)
+    #for i in range(len(spectre1.ROI_limit)):
+    #    spectre1.plot_gaussian_over(ax,i)
+    #plt.tight_layout()
+    #spectre1.save_fig(name[:-4]+".png")
+    res_vs_energy()
+    plt.savefig("energievsresa1")

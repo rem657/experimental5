@@ -1,9 +1,11 @@
+import matplotlib as mpl
+mpl.use('TkAgg')
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.optimize as sp
 import os
 import pickle
-import matplotlib as mpl
+
 
 plt.rcParams.update({"font.size": 25})
 
@@ -82,48 +84,57 @@ class BuildSpectre:
 
         return np.array(data_list, dtype="int"), ROI_list, info_dict,calibration
 
-    def annotate_centroid(self):
+    def annotate_centroid(self,**kwargs):
+        element = kwargs.get("name","")
         for index,peak in enumerate(self.peaks):
             center = peak.mucalib
             func1 = lambda x: self.calibration.func_parametre(x) - center
-            x = int(sp.root_scalar(func1, x0=500, x1=650).root)-1
-            y = peak.gaussian_function(x) #self.data[x]
+            x = int(sp.root_scalar(func1, bracket = [0,len(self.datax)]).root)
+            y = peak.gaussian_function(x) + self.noise_array[x] #self.data[x]
             ymax = plt.ylim()[1]
             delta = ymax - y
-            if x <= len(self.datax) / 4 :
+            print(fr"{center:.2f} $\pm$ {3*peak.incertitude[0]:.1}")
+            if x <= (len(self.datax) / 4) - 1:
                 xmax_quart = int(len(self.datax) / 4) - 1
                 x_norm = x/xmax_quart
-                new_x = xmax_quart * (x_norm + 0.2)
-                plt.annotate(f"{center:.2f} keV", (center, y), xytext=(new_x, y + delta / 2),arrowprops={"arrowstyle": "->"})
+                ajout = (x_norm + 0.2)
+                new_x = self.calibration.predict(xmax_quart * ajout) if ajout < 1 else self.calibration.predict(xmax_quart * (ajout - 1))
+                plt.annotate(f"{element}  {center:.2f} keV", (center, y), xytext=(new_x, y + delta / 2),arrowprops={"arrowstyle": "->"})
 
-            elif x <= len(self.datax) / 2:
+            elif x <= (len(self.datax) / 2) - 1:
                 xmax_demi = int(len(self.datax) / 2)-1
                 x_norm = x / xmax_demi
-                new_x = xmax_demi * (x_norm - 0.2)
-                plt.annotate(f"{center:.2f} keV", (center, y), xytext=(new_x, y + delta / 2),arrowprops={"arrowstyle": "->"})
+                ajout = (x_norm + 0.2)
+                new_x = self.calibration.predict((xmax_demi * ajout)) if ajout < 1 else self.calibration.predict((xmax_demi * (ajout - 1)) + ((len(self.datax) / 4)))
+                plt.annotate(f"{element}  {center:.2f} keV", (center, y), xytext=(new_x, (delta * np.random.ranf()) + y),arrowprops={"arrowstyle": "->"})
 
-            elif x <= 3 * len(self.datax) / 4:
+            elif x <= 3 * (len(self.datax) / 4) - 1:
                 xmax_3q = int(3 * len(self.datax) / 4) - 1
                 x_norm = x / xmax_3q
-                new_x = xmax_3q * (x_norm + 0.2)
-                plt.annotate(f"{center:.2f} keV", (center, y), xytext=(new_x, y + delta / 2),arrowprops={"arrowstyle": "->"})
+                ajout = (x_norm + 0.2)
+                new_x = self.calibration.predict((xmax_3q * ajout) + ((len(self.datax) / 2))) if ajout < 1 else self.calibration.predict((xmax_3q * (ajout - 1)) + ((len(self.datax) / 2)))
+                plt.annotate(f"{element}  {center:.2f} keV", (center, y), xytext=(new_x, y + delta / 2),arrowprops={"arrowstyle": "->"})
 
-            elif x <= len(self.datax):
+            elif x <= len(self.datax)-1:
                 xmax_fin = int(len(self.datax)) - 1
                 x_norm = x / xmax_fin
-                new_x = xmax_fin * (x_norm - 0.2)
-                plt.annotate(f"{center:.2f} keV", (center, y), xytext=(new_x, y + delta / 2),arrowprops={"arrowstyle": "->"})
+                ajout = (x_norm + 0.2)
+                new_x = self.calibration.predict((xmax_fin * ajout) + (3 * (len(self.datax) / 4))) if ajout < 1 else self.calibration.predict((xmax_fin * (ajout - 1)) + (3 * (len(self.datax) / 4)))
+
+                plt.annotate(f"{element}  {center:.2f} keV", (center, y), xytext=(new_x, y + delta / 2),arrowprops={"arrowstyle": "->"})
 
 
-    def show_Spectre(self, label = "placeHolder", title="",**kwargs):
+    def show_Spectre(self, title="",**kwargs):
         data = self.data
         type = kwargs.get("type","bar")
         xlabel = kwargs.get("xlabel","Canaux") if not self.calibrated else kwargs.get("xlabel","Énergie [keV]")
         ylabel = kwargs.get("ylabel", "Nombre d'émission détectées")
+        label = kwargs.get("label","")
+        color = kwargs.get("color",'#1f77b4')
         if type == "bar":
-            plt.bar(x=self.datax, height=data, width=1,label = label)
+            plt.bar(x=self.datax, height=data, width=1,label = label,zorder = 2) if label != "" else plt.bar(x=self.datax, height=data, width=1,zorder = 2)
         elif type == "plot":
-            plt.plot(self.datax,data,label= label,alpha = 0.8)
+            plt.plot(self.datax,data,label= label,alpha = 0.8,zorder = 2) if label != "" else plt.plot(self.datax,data,alpha = 0.8,zorder = 2)
         plt.xlabel(xlabel)
         plt.ylabel(ylabel)
         plt.title(f"{title}")
@@ -134,6 +145,7 @@ class BuildSpectre:
 
     def add_ROIS_to_fig(self,**kwargs):
         ROI_mask = np.full(len(self.data),np.nan)
+        label = kwargs.get("label","")
         type = kwargs.get("type","bar")
         for coords in self.ROI_limit:
             ROI_mask[coords[0]:coords[1] + 1] = self.data[coords[0]:coords[1] + 1]
@@ -146,9 +158,9 @@ class BuildSpectre:
             #     right = int(sp.root_scalar(fun2,x0=0,x1=500).root)
             #     ROI_mask[left:right + 1] = np.array(self.data[left:right + 1])
         if type == "bar":
-            plt.bar(x=self.datax, height=ROI_mask, color="darkslateblue", width=1)
+            plt.bar(x=self.datax, height=ROI_mask , width=1, label = label,zorder = 2)#color="darkslateblue"
         elif type == "plot":
-            plt.plot(self.datax,ROI_mask, color="darkslateblue")
+            plt.plot(self.datax,ROI_mask, label = label, zorder = 2)
 
     def calculate_centroid(self) -> list:
         centroid = []
@@ -185,7 +197,7 @@ class BuildSpectre:
         frontier = self.ROI_limit[ROInumber]
         front = self.datax[frontier[0] - 3:frontier[0] + 3]
         back = self.datax[frontier[1] - 2:frontier[1] + 4]
-        return front + back
+        return np.concatenate((front,back),axis = None)
 
     def add_ROI(self, leftlimit: int, rightlimit: int) -> None:
         self.ROI_limit.append((leftlimit, rightlimit))
@@ -216,7 +228,6 @@ class BuildSpectre:
         x = peak.x
         y = peak.y
         for index, xelem in enumerate(x):
-            print(int(xelem))
             y[index] += self.noise_array[int(np.where(self.datax==int(xelem))[0][0])]
         plt.plot(x, y, "-", color="crimson", alpha=0.8)
 
@@ -246,11 +257,12 @@ class BuildSpectre:
         plot = kwargs.get("plot",False)
         retourne = kwargs.get("retour",False)
         retour = None
+        func = kwargs.get("func")
         if not self.calibrated:
             if not energie :
                 raise Exception("L'énergie ne peut être une liste vide si on calibre")
             centroid = [0] + [self.peaks[i].mu for i in range(len(self.peaks))]
-            linFit = Noise(centroid, [0] + energie)
+            linFit = Noise(centroid, [0] + energie,func=func)
             for index, peak in enumerate(self.peaks):
                 peak.mucalib = linFit.predict(peak.mu)
                 peak.sigma = linFit.predict(peak.sigma)
@@ -276,6 +288,7 @@ class BuildSpectre:
             for index, peak in enumerate(self.peaks):
                 peak.mucalib = self.calibration.predict(peak.mu)
                 peak.sigma = self.calibration.predict(peak.sigma)
+                peak.incertitude = self.calibration.predict(peak.incertitude)
             self.datax = self.calibration.predict(self.datax)
             # for index,ROI in enumerate(self.ROI_limit):
             #     left = ROI[0]
@@ -291,15 +304,16 @@ class BuildSpectre:
 
 class Noise():
     def __init__(self, xdata: list, ydata: list,**kwargs):
-        call = lambda x, a, b: np.add(np.multiply(a,x),b)
-        self.func = kwargs.get("function",call)
+        self.func = kwargs.get("func",self.func_lin)
         self.xdata = np.array(xdata)
         self.ydata = np.array(ydata)
         self.param = sp.curve_fit(self.func,xdata = self.xdata,ydata = self.ydata)[0]
-        self.func_parametre = lambda x :self.func(x,*self.param)
 
-    def predict(self,X,return_string =False) -> callable:
-        return (self.func_parametre(X),f"{self.param[0]:.4f}x ") if return_string else self.func_parametre(X)
+    def func_lin(self,x, a, b):
+        return np.add(np.multiply(a,x),b)
+
+    def predict(self,X,return_string = False) -> callable:
+        return (self.func(X, *self.param),f"{self.param[0]:.4f}x ") if return_string else self.func(X, *self.param)
 
 
     def get_rsquared(self):
@@ -320,6 +334,7 @@ class Gaussian():
         self.sigmacalib = abs(param[1])
         self.a = param[2]
         self.y = [self.gaussian_function(x) for x in self.x]
+        self.incertitude = np.sqrt(np.diag(pcov))
 
     def gaussian_function(self, x) -> callable:
         return self.a * np.exp(-(x - self.mu) ** 2 / (2 * self.sigma ** 2))
@@ -495,10 +510,12 @@ class Data_base:
             filename = os.fsdecode(file)
             if filename.endswith(".mca"):
                 temp_str = filename[:-4].split("-")
-                filt1= temp_str[0]
-                filt2 = temp_str[1]
-                filtre = (filt1,filt2)
-                print(filtre)
+                if temp_str[0] != "nofilter":
+                    filt1= temp_str[0]
+                    filt2 = temp_str[1]
+                    filtre = (filt1,filt2)
+                else:
+                    filtre = temp_str[0]
                 spectre = BuildSpectre(filename, "AMDC")
                 temps = spectre.extradata["LIVE_TIME"]
                 name = filename[:-4]
@@ -707,8 +724,8 @@ class Laboratoire_filt_x:
 
     @staticmethod
     def plot_spectre_filtre():
-        #Data_base.create_dataBase_filt_x_filtre()
-        data1 = Data_base.load_database("variation_filtres_data")
+        data1 = Data_base.create_dataBase_filt_x_filtre()
+        # data1 = Data_base.load_database("variation_filtres_data")
         filtres = data1["Filtre"]
         nofiltre_spectre = data1["Filtre"]["nofilter"][0]["Spectre"]
         nofiltre_spectre.data = nofiltre_spectre.data/ float(data1["Filtre"]["nofilter"][0]["Temps"])
@@ -793,8 +810,12 @@ class Laboratoire_filt_x:
     def plot_spectre_filtre_alt():
         data1 = Data_base.load_database("filtres_alterne_data")
         filtres = data1["Filtre"]
-        list_fait = []
+        list_fait = ["nofilter"]
         centro = 17
+        nofilter = filtres["nofilter"][0]
+        nofilter_s = filtres["nofilter"][0]["Spectre"]
+        nofilter_s.data = nofilter_s.data / float(nofilter["Temps"])
+        nofilter_s.calibrate()
         right_lim = centro + 0.02052  # 22.14052
         left_lim = centro - 0.02052
         for filtre in filtres:
@@ -812,6 +833,7 @@ class Laboratoire_filt_x:
                 spectre.show_Spectre(type = "plot",label = f"Filtre de {filtre[0]} et filtre {filtre[1]}")
                 spectre_inv.show_Spectre(type = "plot",label = f"Filtre de {filtre[1]} et filtre {filtre[0]}",
                                               ylabel=r"Émission détectée par seconde [$s^{-1}$]")
+                nofilter_s.show_Spectre(type="plot", label=f"Sans filtre")
                 ind1 = np.where((spectre.datax <  22.3) & (spectre.datax >  22.0))
                 ind2 = np.where((spectre.datax <  25.0) & (spectre.datax >  24.5))
                 ind1 = int(ind1[0][0])
@@ -819,7 +841,7 @@ class Laboratoire_filt_x:
                 y = [spectre.data[ind1],spectre.data[ind2]]
                 x1 = 30/spectre.datax[-1]
                 x2 = 34/spectre.datax[-1]
-                plt.legend(fancybox = True, framealpha = 0.5)
+                plt.legend(fancybox = True, framealpha = 0.5,fontsize = 20)
                 plt.xlim(0,40)
                 plt.show()
 
@@ -1016,13 +1038,18 @@ class Laboratoire_activation:
 
     @staticmethod
     def enelever_bruit(spectre:BuildSpectre,bruit:BuildSpectre):
-        spectre.data = abs(spectre.data - bruit.data)
+        for i in range(len(spectre.data)):
+            temp = spectre.data[i] - bruit.data[i]
+            if temp < 0:
+                temp = 0
+
+            spectre.data[i] = temp
 
     def calibrer(self)->Noise:
         energie = [122,662,1173,1333]
         calibration:BuildSpectre = self.datab["Calibration"]["Spectre"]
         calibration.calculate_peaks()
-        retour = calibration.calibrate(energie,retour=True)
+        retour = calibration.calibrate(energie,retour=True,func = lambda x, a: np.multiply(a,x))
         # calibration.show_Spectre()
         # plt.xlim(0, calibration.datax[-1])
         # plt.show()
@@ -1030,43 +1057,161 @@ class Laboratoire_activation:
 
     def prod_spectre(self):
         calibration = self.calibrer()
-        for key in self.datab.db.keys():
+        keys = list(self.datab.db.keys())
+        cu = keys.pop(keys.index("Cu"))
+        keys= [cu]+keys
+        for key in keys:
             iso = self.datab[key]
             spectre:BuildSpectre = iso["Spectre"]
             spectre.data = spectre.data/float(spectre.extradata.get("LIVE_TIME"))
-            if key != "Calibration":
-                # bruit = iso["Bruit"]
-                # bruit.data = bruit.data / float(bruit.extradata.get("LIVE_TIME"))
+            spectre.add_calibration(calibration)
+
+            if key != "Calibration" :
+                bruit = iso["Bruit"]
+                bruit.data = bruit.data / float(bruit.extradata.get("LIVE_TIME"))
+                self.enelever_bruit(spectre,bruit)
                 spectre.add_calibration(calibration)
+
                 if key == "Ag108":
                     fun1 = lambda x : calibration.func_parametre(x) - 580
                     fun2 = lambda x: calibration.func_parametre(x) - 693
                     left = int(sp.root_scalar(fun1,bracket = [0,2000]).root)
                     right = int(sp.root_scalar(fun2, bracket=[0, 2000]).root)
                     spectre.add_ROI(left,right)
+                    spectre.calculate_peaks()
+                    spectre.calibrate()
+
                 elif key == "Ag110":
-                    fun1 = lambda x : calibration.func_parametre(x) - 600
+                    fun1 = lambda x : calibration.func_parametre(x) - 620
                     fun2 = lambda x: calibration.func_parametre(x) - 690
                     left = int(sp.root_scalar(fun1,bracket = [0,2000]).root)
                     right = int(sp.root_scalar(fun2, bracket=[0, 2000]).root)
                     spectre.add_ROI(left,right)
-                spectre.calculate_peaks()
-                spectre.calibrate()
-                spectre.show_Spectre(title=key)
-                spectre.add_ROIS_to_fig()
+                    spectre.calculate_peaks()
+                    spectre.calibrate()
+                else:
+                    spectre.calculate_peaks()
+                    spectre.calibrate()
+                if key == "Cu":
+                    spectre.show_Spectre(type="plot", color="grey")
+
+                spectre.add_ROIS_to_fig(label = key,type = "plot")
                 spectre.annotate_centroid()
-                plt.xlim(0,spectre.datax[-1])
-                plt.xlabel("Énergie [keV]")
-                plt.ylabel("Émission détecté par seconde [comptes/s]")
-                plt.show()
+
+        plt.xlabel("Énergie [keV]")
+        plt.ylabel("Émission détecté par seconde [comptes/s]")
+        plt.legend(fancybox = True, framealpha = 0.5)
+        plt.show()
+
+    @staticmethod
+    def calculer_K():
+        dict_elem = {"Al":{"G":0.40,"K_t":[7/100],"K_p":0.13,"f":1},
+                     "Cu":{"G":0.27,"K_t":[7/100],"K_p":0.15,"f":0.09},
+                     "V":{"G":0.27,"K_t":[7/100],"K_p":0.15,"f":1}}
+
+        retour = {}
+        for elem in dict_elem:
+            # print(elem)
+            mini_dic = dict_elem[elem]
+            K = mini_dic["G"]*mini_dic["K_t"][-1] * mini_dic["K_p"] * mini_dic["f"]
+            # print(f"{K:.4}")
+            retour[f"{elem}"] = K
+        return retour
+
+    @staticmethod
+    def calculer_lambda():
+        dict_elem = {"Al": {"1/2 life":2.241*60},
+                     "Cu": {"1/2 life":2.37*60},
+                     "V": {"1/2 life":3.743*60}}
+        const = 0.693147
+        retour = {}
+        for elem in dict_elem:
+            retour[elem] = const/dict_elem[elem]["1/2 life"]
+        return retour
+
+    def calculate_activite_init(self):
+        dict_elem = {"Al": {"live": 425,"Spectre":self.datab["Al28"]["Spectre"],"Bruit":self.datab["Al28"]["Bruit"]},
+                     "Cu": {"live": 302,"Spectre":self.datab["Cu"]["Spectre"],"Bruit":self.datab["Cu"]["Bruit"]},
+                     "V":{"live": 600,"Spectre":self.datab["V52"]["Spectre"],"Bruit":self.datab["V52"]["Bruit"]}}
+        lambdas = self.calculer_lambda()
+        ks = self.calculer_K()
+        retour = {}
+        for elem in dict_elem:
+            donne = dict_elem[elem]
+            spectre = donne["Spectre"]
+            bruit = donne["Bruit"]
+            bruit.data = bruit.data / float(bruit.extradata.get("LIVE_TIME"))
+            spectre.data = spectre.data / float(spectre.extradata.get("LIVE_TIME"))
+
+            k = ks[elem]
+            y = lambdas[elem]
+            self.enelever_bruit(spectre,bruit)
+            gamma = self.get_ROI_data(spectre)
+            num =  gamma * y
+            exp1 = np.exp(-y*10)
+            exp2 = 1 - np.exp(-y * donne["live"])
+            denu = k * exp1 * exp2
+            retour[elem] = num/denu
+        return retour
+
+    def calculate_flux(self):
+        N_a = 6.023e23
+        dict_elem = {
+            "Al": {"temps_activation": 7.86e3, "alpha":1,"m":159.367,"sigma":0.23*10**(-24),"W":27},
+            "Cu": {"temps_activation": 1.674e4, "alpha":0.3083,"m":336.048459,"sigma":2.17*10**(-24),"W":65}}
+        As = self.calculate_activite_init()
+        lambdas = self.calculer_lambda()
+        retour = {}
+        for elem in dict_elem:
+            donne = dict_elem[elem]
+            y = lambdas[elem]
+            N_c = donne["alpha"] * donne["m"] * N_a * (donne["W"])**(-1)
+            print(f"{elem} :{N_c}")
+            A = As[elem]
+            S = 1 - np.exp(-y*donne["temps_activation"])
+            retour[elem] = A/(donne["sigma"] * N_c * S)
+        return retour
+
+    def get_ROI_data(self,spectre:BuildSpectre):
+        return np.sum(spectre.data)
+
+    def calcul_section_efficace(self):
+        flux = [3.53e3,1.41e4]
+        N_a = 6.023e23
+        dict_elem = {
+            "V": {"temps_activation": 4.5e3, "alpha": 0.9975, "m": 42.32, "W": 51},
+            "Cu": {"temps_activation": 1.674e4, "alpha": 0.3083, "m": 336.048459, "W": 65}}
+        As = self.calculate_activite_init()
+        retour = {}
+        for elem in dict_elem:
+            donne = dict_elem[elem]
+            N_c = donne["alpha"] * donne["m"] * N_a * (donne["W"])**(-1)
+            section = []
+            for f in flux:
+                section.append(As[elem]/(f * N_c * 1))
+            retour[elem] = section
+        return retour
+
+
 
 
 
 
 if __name__ == "__main__":
-    #Data_base.creat_database_activation().save_DataBase()
-    lab = Laboratoire_activation()
-    lab.prod_spectre()
+    Data_base.create_dataBase_filt_x_filtre_alter().save_DataBase()
+    Laboratoire_filt_x.plot_spectre_filtre_alt()
+    # lab = Laboratoire_activation()
+    # fluxes = lab.calcul_section_efficace()
+    # act = lab.calculate_activite_init()
+    # for elem in fluxes:
+    #     print(elem)
+    #     print(f"activité : {act[elem]:.4}")
+    #     for index,i in enumerate(fluxes[elem]):
+    #         if index == 1:
+    #             print(f"Section efficace pour flux max: {i*10**(24):.4}")
+    #         else:
+    #             print(f"Section efficace pour flux min: {i * 10 ** (24):.4}")
+    #lab.calculer_flux()
 
     # data1 = Data_base.load_database("variation_courant_tension_data")
     # courant_const = data1["Courant"]
